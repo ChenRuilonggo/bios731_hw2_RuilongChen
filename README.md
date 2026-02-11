@@ -89,7 +89,7 @@ This choice introduces additional Monte Carlo variability in the bootstrap inter
 ### Step 1 — Clone the repository
 
 ``` bash
-git clone <repo-url>
+git clone git@github.com:ChenRuilonggo/bios731_hw2_RuilongChen.git
 ```
 
 Open the project using the `.Rproj` file.
