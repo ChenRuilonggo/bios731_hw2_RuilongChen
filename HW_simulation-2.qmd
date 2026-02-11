@@ -235,6 +235,10 @@ where
 
 *(If you choose different values, justify your choice and discuss the computation/accuracy trade-off.)*
 
+I use B = 50 and B_inner =10. I parallelize across simulation scenarios and it costs 6 minutes. So if I choose B = 500 and B_inner =100, it will cost me 10 hours. The trade-off is less accuracy.
+
+
+
 #### Computing + reproducibility requirements
 
 Execute the full simulation study. For full credit, implement the following:
@@ -274,6 +278,147 @@ Create a plot or table summarizing simulation results across scenarios and metho
 -   Include informative captions for each plot/table.
 -   For coverage plots, consider adding a reference line at 0.95.
 
+
+
+```{r, echo=FALSE}
+library(kableExtra)
+# Load all scenario result files
+rds_files <- list.files("data", pattern = "^sim_.*\\.rds$", full.names = TRUE)
+
+stopifnot(length(rds_files) > 0)
+
+res <- purrr::map_dfr(rds_files, readRDS) %>%
+  mutate(
+    n = as.integer(n),
+    beta_treat = as.numeric(beta_treat),
+    err_dist = factor(err_dist, levels = c("normal", "t3"))
+  )
+
+# Quick check: how many simulation replicates per scenario file?
+scenario_counts <- res %>%
+  count(scenario_id, n, beta_treat, err_dist, name = "n_rows") %>%
+  arrange(err_dist, beta_treat, n)
+
+kable(scenario_counts, caption = "Number of rows (simulation replicates) per scenario file.")
+```
+
+### Bias of beta_hat
+
+```{r,echo=FALSE}
+# Build a long table for coverage/time by method, and compute bias
+res_long <- res %>%
+  pivot_longer(
+    cols = c(cover_wald, cover_perc, cover_bt,
+             time_wald,  time_perc,  time_bt),
+    names_to = c(".value", "method"),
+    names_pattern = "(cover|time)_(wald|perc|bt)"
+  ) %>%
+  mutate(
+    method = recode(method,
+                    wald = "Wald",
+                    perc = "Bootstrap percentile",
+                    bt   = "Bootstrap t"),
+    bias = beta_hat - beta_treat
+  )
+
+# Summaries by scenario and method
+summary_tbl <- res_long %>%
+  group_by(n, beta_treat, err_dist, method) %>%
+  summarise(
+    n_sim_effective = sum(is.finite(bias)),
+    bias_mean = mean(bias, na.rm = TRUE),
+    bias_sd   = sd(bias, na.rm = TRUE),
+    coverage  = mean(cover, na.rm = TRUE),
+    time_mean = mean(time, na.rm = TRUE),
+    time_median = median(time, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+## ---- Bias table ---------------------------------------------------------
+bias_tbl <- summary_tbl %>%
+  group_by(n, beta_treat, err_dist) %>%
+  summarise(
+    bias_mean = mean(bias_mean),
+    bias_sd   = mean(bias_sd),
+    .groups="drop"
+  ) %>%
+  arrange(err_dist, beta_treat, n)
+
+knitr::kable(
+  bias_tbl,
+  digits = 4,
+  caption = "Monte Carlo bias and SD of the OLS treatment effect estimator."
+)
+
+```
+
+### Coverage of the 95% CI for beta_hat
+
+```{r,echo=FALSE}
+## ---- Coverage plot ------------------------------------------------------
+library(ggplot2)
+
+p_cov <- summary_tbl %>%
+  ggplot(aes(x = factor(n), y = coverage, color = method, group = method)) +
+  geom_hline(yintercept = 0.95, linetype="dashed") +
+  geom_point(size = 2) +
+  geom_line() +
+  facet_grid(err_dist ~ beta_treat, labeller = label_both) +
+  coord_cartesian(ylim = c(0,1)) +
+  labs(
+    title = "Empirical coverage of 95% confidence intervals",
+    x = "Sample size (n)",
+    y = "Coverage probability",
+    color = "Method",
+    caption = "Dashed line indicates nominal 95% coverage."
+  )
+
+p_cov
+
+```
+
+### SE distribution table
+
+```{r,echo=FALSE}
+## ---- SE summary table ---------------------------------------------------
+se_tbl <- res %>%
+  group_by(n, beta_treat, err_dist) %>%
+  summarise(
+    mean_model_SE = mean(se_hat),
+    sd_model_SE   = sd(se_hat),
+    mean_boot_SE  = mean(se_boot),
+    sd_boot_SE    = sd(se_boot),
+    .groups="drop"
+  ) %>%
+  arrange(err_dist, beta_treat, n)
+
+knitr::kable(
+  se_tbl,
+  digits = 4,
+  caption = "Summary of standard error estimates."
+)
+
+```
+
+### Computation time across methods
+
+```{r,echo=FALSE}
+time_tbl <- summary_tbl %>%
+  group_by(method) %>%
+  summarise(
+    mean_time   = mean(time_mean),
+    median_time = median(time_median),
+    .groups="drop"
+  ) %>%
+  arrange(mean_time)
+
+knitr::kable(
+  time_tbl,
+  digits = 4,
+  caption = "Average computation time per simulation replicate."
+)
+```
+
 ### Problem 1.5 Discussion
 
 Interpret the results summarized in Problem 1.4.
@@ -286,3 +431,17 @@ Interpret the results summarized in Problem 1.4.
 -   Which method(s) provide the best coverage for the heavy-tailed errors?
 
 Finally, briefly comment on any notable interactions (e.g., how performance changes with $n$ or error type) and any practical recommendations you would make based on your results.
+
+Overall, the simulation results show that the Wald confidence interval performs consistently well across both error distributions and sample sizes. The bootstrap-based intervals are substantially more computationally expensive and their performance depends more strongly on the sample size and error distribution.
+
+Computation time.
+The Wald method is the fastest approach by a large margin because it requires only a single model fit per simulation replicate. The bootstrap percentile method is much slower due to repeated resampling and refitting, and the bootstrap-t method is the most computationally intensive because it includes an additional inner bootstrap loop. Thus, computation time increases dramatically from Wald → bootstrap percentile → bootstrap-t.
+
+Coverage under normal errors.
+Under normally distributed errors, the Wald interval provides coverage very close to the nominal 95% level across all sample sizes. In contrast, the bootstrap methods do not show clear improvement as the sample size increases and in some scenarios their coverage even slightly decreases. This indicates that the normal-theory approximation underlying the Wald interval works very well when the model assumptions are satisfied.
+
+Coverage under heavy-tailed errors.
+For heavy-tailed errors, the bootstrap methods improve as the sample size increases, showing a clear upward trend toward the nominal coverage level. The bootstrap-t interval consistently outperforms the bootstrap percentile interval, suggesting that studentization improves the accuracy of bootstrap confidence intervals. However, in this study neither bootstrap method surpasses the Wald interval in coverage. A likely explanation is the relatively small number of bootstrap replicates used (B = 50 and B_inner = 10). With such small bootstrap sizes, the bootstrap intervals are subject to substantial Monte Carlo error, which can lead to undercoverage and unstable performance. With larger bootstrap sizes, the bootstrap methods would likely perform more competitively in the heavy-tailed setting.
+
+Interactions and practical recommendations.
+Two main patterns emerge. First, the Wald interval performs well across both distributions and sample sizes in this simulation. Second, the benefit of bootstrap methods becomes more visible in heavy-tailed settings and increases with sample size. Across all scenarios, the bootstrap-t interval consistently performs better than the bootstrap percentile interval. In practice, the Wald interval is recommended for routine use due to its excellent performance and extremely low computational cost. The bootstrap-t method may be preferred when robustness to non-normal errors is important, but it requires substantially larger numbers of bootstrap replicates to achieve stable and reliable coverage.
