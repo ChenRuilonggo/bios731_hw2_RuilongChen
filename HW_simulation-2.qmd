@@ -17,6 +17,9 @@ execute:
 ```{r, echo = FALSE}
 library(tidyverse)
 ```
+## GitHub Repo Link
+<https://github.com/ChenRuilonggo/bios731_hw2_RuilongChen>
+
 
 ## Context and learning objectives
 
